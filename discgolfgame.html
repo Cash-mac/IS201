@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Disc Golf</title>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        #powerBar {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border: 2px solid white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #powerLevel {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #ff0000, #ffff00, #00ff00);
+            transition: width 0.1s;
+        }
+        #nextLevel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            display: none;
+            z-index: 100;
+        }
+        #nextLevel:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div id="throwCount">Throws: 0</div>
+        <div id="level">Level: 1</div>
+        <div id="instructions">Click and hold to charge power, drag to aim, release to throw</div>
+    </div>
+    <div id="powerBar">
+        <div id="powerLevel"></div>
+    </div>
+    <button id="nextLevel">Next Level</button>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Game setup
+        let scene, camera, renderer;
+        let disc, basket, ground, obstacles = [];
+        let throwCount = 0;
+        let level = 1;
+        let throwPower = 0;
+        let isCharging = false;
+        let isDragging = false;
+        let startPos = null;
+        let targetDirection = new THREE.Vector3();
+        let throwPosition = null;
+        let gameStarted = false;
+        let canThrow = true;
+        let basketHitbox;
+
+        const GRAVITY = -9.8;
+        const FRICTION = 0.98;
+        const GROUND_FRICTION = 0.95;
+
+        // Initialize game
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+            camera.lookAt(0, 0, 0);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 20, 10);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+            
+            // Create ground
+            const groundGeometry = new THREE.PlaneGeometry(100, 100);
+            const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x4CAF50 });
+            ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Create disc
+            createDisc();
+            
+            // Create basket
+            createBasket(0, 0, -30);
+            
+            // Generate level
+            generateLevel(level);
+            
+            // Event listeners
+            document.addEventListener('mousedown', onMouseDown, false);
+            document.addEventListener('mousemove', onMouseMove, false);
+            document.addEventListener('mouseup', onMouseUp, false);
+            document.addEventListener('touchstart', onTouchStart, false);
+            document.addEventListener('touchmove', onTouchMove, false);
+            document.addEventListener('touchend', onTouchEnd, false);
+            document.getElementById('nextLevel').addEventListener('click', nextLevel);
+            window.addEventListener('resize', onWindowResize, false);
+            
+            animate();
+        }
+        
+        // Create the disc
+        function createDisc() {
+            const discGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 32);
+            const discMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            disc = new THREE.Mesh(discGeometry, discMaterial);
+            disc.position.set(0, 0.5, 5);
+            disc.castShadow = true;
+            disc.velocity = new THREE.Vector3();
+            disc.angularVelocity = new THREE.Vector3();
+            scene.add(disc);
+        }
+        
+        // Create the basket
+        function createBasket(x, y, z) {
+            const baseGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.05, 32);
+            const baseMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 });
+            const base = new THREE.Mesh(baseGeometry, baseMaterial);
+            base.position.set(x, y + 0.025, z);
+            base.castShadow = true;
+            
+            const poleGeometry = new THREE.CylinderGeometry(0.05, 0.05, 3, 16);
+            const poleMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+            const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+            pole.position.set(x, y + 1.5, z);
+            pole.castShadow = true;
+            
+            const basketGeometry = new THREE.CylinderGeometry(0.5, 0.3, 0.5, 32, 1, true);
+            const basketMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xFFFFFF,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.7,
+                depthWrite: false
+            });
+            basket = new THREE.Mesh(basketGeometry, basketMaterial);
+            basket.position.set(x, y + 2.25, z);
+            basket.castShadow = true;
+            
+            // Create larger hitbox for basket
+            const hitboxGeometry = new THREE.CylinderGeometry(0.7, 0.5, 1, 32);
+            const hitboxMaterial = new THREE.MeshBasicMaterial({
+                visible: false
+            });
+            basketHitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
+            basketHitbox.position.set(x, y + 2.25, z);
+            scene.add(basketHitbox);
+            
+            // Add chains
+            for (let i = 0; i < 12; i++) {
+                const chainGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.5);
+                const chainMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+                const chain = new THREE.Mesh(chainGeometry, chainMaterial);
+                const angle = (i / 12) * Math.PI * 2;
+                chain.position.set(
+                    x + Math.cos(angle) * 0.4,
+                    y + 2,
+                    z + Math.sin(angle) * 0.4
+                );
+                scene.add(chain);
+            }
+            
+            scene.add(base);
+            scene.add(pole);
+            scene.add(basket);
+        }
+        
+        // Generate random level
+        function generateLevel(levelNum) {
+            // Remove existing obstacles
+            obstacles.forEach(obstacle => scene.remove(obstacle));
+            obstacles = [];
+            
+            // Create random obstacles based on level
+            const obstacleCount = Math.min(levelNum + 2, 8);
+            
+            for (let i = 0; i < obstacleCount; i++) {
+                const difficulty = Math.random() * levelNum;
+                let obstacle;
+                
+                if (difficulty < 2) {
+                    // Trees
+                    const treeGeometry = new THREE.CylinderGeometry(0.3, 0.3, 4);
+                    const treeMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 });
+                    obstacle = new THREE.Mesh(treeGeometry, treeMaterial);
+                    obstacle.position.set(
+                        (Math.random() - 0.5) * 20,
+                        2,
+                        -10 - Math.random() * 20
+                    );
+                } else if (difficulty < 4) {
+                    // Rocks
+                    const rockGeometry = new THREE.SphereGeometry(0.5 + Math.random() * 0.5);
+                    const rockMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+                    obstacle = new THREE.Mesh(rockGeometry, rockMaterial);
+                    obstacle.position.set(
+                        (Math.random() - 0.5) * 20,
+                        0.5,
+                        -10 - Math.random() * 20
+                    );
+                } else {
+                    // Hills
+                    const hillGeometry = new THREE.ConeGeometry(2, 2, 32);
+                    const hillMaterial = new THREE.MeshPhongMaterial({ color: 0x4CAF50 });
+                    obstacle = new THREE.Mesh(hillGeometry, hillMaterial);
+                    obstacle.position.set(
+                        (Math.random() - 0.5) * 20,
+                        1,
+                        -10 - Math.random() * 20
+                    );
+                }
+                
+                obstacle.castShadow = true;
+                scene.add(obstacle);
+                obstacles.push(obstacle);
+            }
+            
+            // Adjust basket position
+            const newBasketZ = -30 - levelNum * 5;
+            basket.position.z = newBasketZ;
+            basketHitbox.position.z = newBasketZ;
+        }
+        
+        // Event handlers
+        function onMouseDown(event) {
+            if (!canThrow) return;
+            
+            event.preventDefault();
+            startPos = { x: event.clientX, y: event.clientY };
+            throwPosition = { x: disc.position.x, y: disc.position.y, z: disc.position.z };
+            isCharging = true;
+            isDragging = false;
+            throwPower = 0;
+        }
+        
+        function onMouseMove(event) {
+            if (!startPos || !canThrow) return;
+            
+            event.preventDefault();
+            const dx = event.clientX - startPos.x;
+            const dy = event.clientY - startPos.y;
+            
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                isDragging = true;
+                targetDirection.set(-dx * 0.01, -dy * 0.01, -1).normalize();
+            }
+        }
+        
+        function onMouseUp(event) {
+            if (!startPos || !canThrow) return;
+            
+            event.preventDefault();
+            if (isCharging && throwPower > 0.1) {
+                throwDisc(throwPower);
+                throwCount++;
+                document.getElementById('throwCount').textContent = `Throws: ${throwCount}`;
+            }
+            isCharging = false;
+            isDragging = false;
+            startPos = null;
+            throwPower = 0;
+            document.getElementById('powerLevel').style.width = '0%';
+        }
+        
+        function onTouchStart(event) {
+            event.preventDefault();
+            const touch = event.touches[0];
+            onMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+        }
+        
+        function onTouchMove(event) {
+            event.preventDefault();
+            const touch = event.touches[0];
+            onMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+        }
+        
+        function onTouchEnd(event) {
+            event.preventDefault();
+            onMouseUp({});
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Throw disc
+        function throwDisc(power) {
+            canThrow = false;
+            const throwSpeed = power * 30;
+            
+            if (isDragging) {
+                disc.velocity.copy(targetDirection).multiplyScalar(throwSpeed);
+            } else {
+                disc.velocity.set(0, 0.3, -1).normalize().multiplyScalar(throwSpeed);
+            }
+            
+            disc.angularVelocity.set(0, power * 20, 0);
+            gameStarted = true;
+        }
+        
+        // Reset disc and camera position
+        function resetDisc() {
+            disc.position.set(0, 0.5, 5);
+            disc.velocity.set(0, 0, 0);
+            disc.angularVelocity.set(0, 0, 0);
+            disc.rotation.set(0, 0, 0);
+            canThrow = true;
+            
+            // Reset camera to show disc-to-basket line
+            const discToBasket = new THREE.Vector3().subVectors(basket.position, disc.position);
+            const distance = discToBasket.length();
+            const angle = Math.atan2(discToBasket.x, discToBasket.z);
+            
+            // Position camera behind disc looking toward basket
+            camera.position.set(
+                disc.position.x - Math.sin(angle) * 5,
+                disc.position.y + 3,
+                disc.position.z - Math.cos(angle) * 5
+            );
+            
+            // Look at a point between the disc and basket
+            const lookTarget = new THREE.Vector3(
+                disc.position.x + Math.sin(angle) * 5,
+                disc.position.y,
+                disc.position.z + Math.cos(angle) * 5
+            );
+            //camera.lookAt(lookTarget);
+            camera.lookAt(basket.position);
+        }
+        
+        // Check collision
+        function checkCollision() {
+            // Check if disc is in the basket hitbox (more forgiving than visual basket)
+            const distance = disc.position.distanceTo(basketHitbox.position);
+            const verticalDiff = Math.abs(disc.position.y - basketHitbox.position.y);
+            
+            if (distance < 0.7 && verticalDiff < 0.5) {
+                document.getElementById('nextLevel').style.display = 'block';
+                gameStarted = false;
+                return true;
+            }
+            
+            // Check obstacle collisions
+            obstacles.forEach(obstacle => {
+                const dist = disc.position.distanceTo(obstacle.position);
+                if (dist < 1) {
+                    const normal = new THREE.Vector3().subVectors(disc.position, obstacle.position).normalize();
+                    disc.velocity.reflect(normal).multiplyScalar(0.7);
+                }
+            });
+            
+            return false;
+        }
+        
+        // Next level
+        function nextLevel() {
+            level++;
+            document.getElementById('level').textContent = `Level: ${level}`;
+            document.getElementById('nextLevel').style.display = 'none';
+            resetDisc();
+            generateLevel(level);
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (isCharging) {
+                throwPower = Math.min(throwPower + 0.02, 1);
+                document.getElementById('powerLevel').style.width = `${throwPower * 100}%`;
+            }
+            
+            if (gameStarted) {
+                // Apply physics
+                disc.velocity.y += GRAVITY * 0.016;
+                disc.position.add(disc.velocity.clone().multiplyScalar(0.016));
+                disc.rotation.y += disc.angularVelocity.y * 0.016;
+                
+                // Ground collision
+                if (disc.position.y < 0.5) {
+                    disc.position.y = 0.5;
+                    disc.velocity.y = Math.abs(disc.velocity.y) * 0.3;
+                    disc.velocity.x *= GROUND_FRICTION;
+                    disc.velocity.z *= GROUND_FRICTION;
+                    disc.angularVelocity.multiplyScalar(0.9);
+                    
+                    // Stop the disc when it's slow enough
+                    if (disc.velocity.length() < 0.1) {
+                        gameStarted = false;
+                        canThrow = true;
+                    }
+                } else {
+                    // Air friction
+                    disc.velocity.multiplyScalar(FRICTION);
+                }
+                
+                // Check win condition
+                checkCollision();
+                
+                // Follow camera - positioned behind and above the disc
+                const followOffset = new THREE.Vector3(0, 3, 6);
+                const targetPosition = new THREE.Vector3(
+                    disc.position.x + followOffset.x,
+                    disc.position.y + followOffset.y,
+                    disc.position.z + followOffset.z
+                );
+                
+                // Smooth camera movement
+                camera.position.lerp(targetPosition, 0.1);
+                camera.lookAt(disc.position);
+            } else if (!canThrow) {
+                // When disc has stopped but before it can be thrown again
+                const viewOffset = new THREE.Vector3(0, 5, 8);
+                const targetPosition = new THREE.Vector3(
+                    disc.position.x + viewOffset.x,
+                    disc.position.y + viewOffset.y,
+                    disc.position.z + viewOffset.z
+                );
+                
+                camera.position.lerp(targetPosition, 0.05);
+                camera.lookAt(disc.position);
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

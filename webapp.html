@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Games</title>
+  <style>
+    body {
+      background-color: #480303;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100vh;
+      margin: 0;
+      color: white;
+      text-decoration: wavy;
+      font-family: sans-serif;
+      padding-top: 20px;
+      background-image: url('../assets/img/snakback.jpg');
+    }
+    canvas {
+      
+      background-color: #214f2e;
+      border: 2px solid #0f0;
+      margin-top: 20px;
+    }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 300px;
+    }
+    label {
+      display: flex;
+      justify-content: space-between;
+    }
+    input[type="range"] {
+      width: 100%;
+    }
+    button {
+      padding: 8px 16px;
+      background-color: #0f0;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <button onclick="location.href='index.html'">Home</button>
+    <button onclick="location.href='scratch.html'">Disc golf</button>
+</div>
+    <h1>Snake Game</h1>
+  <div class="controls">
+    <label>
+      Snake Speed: <span id="speedValue">5</span>
+    </label>
+    <input type="range" min="1" max="10" value="5" id="speedSlider">
+
+    <label>
+      Arena Size: <span id="sizeValue">20</span>
+    </label>
+    <input type="range" min="14" max="60" value="20" id="sizeSlider">
+
+    <button onclick="startGame()">Start Game</button>
+  </div>
+
+  <canvas id="game"></canvas>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const speedSlider = document.getElementById("speedSlider");
+    const sizeSlider = document.getElementById("sizeSlider");
+    const speedValue = document.getElementById("speedValue");
+    const sizeValue = document.getElementById("sizeValue");
+
+    speedSlider.oninput = () => speedValue.textContent = speedSlider.value;
+    sizeSlider.oninput = () => sizeValue.textContent = sizeSlider.value;
+
+    let snake, dx, dy, food, score, gameOver, frame, interval, gridSize, tileCount;
+    let directionChanged = false;
+
+    function startGame() {
+      clearInterval(interval);
+
+      // Setup
+      const speed = parseInt(speedSlider.value);
+      tileCount = parseInt(sizeSlider.value);
+      gridSize = 600 / tileCount;
+      canvas.width = canvas.height = 600;
+
+      snake = [{ x: 4, y: 10 }];
+      dx = 1;
+      dy = 0;
+      food = spawnFood();
+      score = 0;
+      gameOver = false;
+
+      frame = 0;
+      interval = setInterval(gameLoop, 1000 / (speed * 2));
+    }
+
+    function spawnFood() {
+      let x, y;
+      do {
+        x = Math.floor(Math.random() * tileCount);
+        y = Math.floor(Math.random() * tileCount);
+      } while (snake.some(segment => segment.x === x && segment.y === y));
+      return { x, y };
+    }
+
+    function gameLoop() {
+      if (gameOver) {
+        ctx.fillStyle = "red";
+        ctx.font = "20px Arial";
+        ctx.fillText("Game Over! Score: " + score, 80, 200);
+        return;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+      if (
+        head.x < 0 || head.x >= tileCount ||
+        head.y < 0 || head.y >= tileCount ||
+        snake.some(segment => segment.x === head.x && segment.y === head.y)
+      ) {
+        gameOver = true;
+        return;
+      }
+
+      snake.unshift(head);
+      directionChanged = false;
+
+      if (head.x === food.x && head.y === food.y) {
+        food = spawnFood();
+        score++;
+      } else {
+        snake.pop();
+      }
+
+      // Draw food
+      ctx.fillStyle = "red";
+      ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize, gridSize);
+
+      // Draw snake
+      ctx.fillStyle = "lime";
+      for (let segment of snake) {
+        ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize, gridSize);
+      }
+    }
+
+    document.addEventListener("keydown", e => {
+        if (directionChanged) return;
+
+        if (e.key === "ArrowUp" && dy === 0) {
+        dx = 0; dy = -1;
+        directionChanged = true;
+        } else if (e.key === "ArrowDown" && dy === 0) {
+        dx = 0; dy = 1;
+        directionChanged = true;
+        } else if (e.key === "ArrowLeft" && dx === 0) {
+        dx = -1; dy = 0;
+        directionChanged = true;
+        } else if (e.key === "ArrowRight" && dx === 0) {
+        dx = 1; dy = 0;
+        directionChanged = true;
+        }
+    });
+
+  </script>
+  
+</body>
+</html>
